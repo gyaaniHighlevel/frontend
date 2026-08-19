@@ -1,0 +1,89 @@
+
+@import url('https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  --background: #ffffff;
+  --foreground: #0f172a;
+  --card: #ffffff;
+  --card-foreground: #0f172a;
+  --popover: #ffffff;
+  --popover-foreground: #0f172a;
+  --primary: #1d4ed8;
+  --primary-foreground: #ffffff;
+  --secondary: #f7f9fc;
+  --secondary-foreground: #475569;
+  --muted: #f1f5fb;
+  --muted-foreground: #64748b;
+  --accent: #e6efff;
+  --accent-foreground: #1d4ed8;
+  --destructive: #b91c1c;
+  --destructive-foreground: #ffffff;
+  --border: #e6eaf1;
+  --input: #d5dcea;
+  --ring: #3b82f6;
+  --radius: 0.5rem;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --font-sans: "Instrument Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  --font-heading: var(--font-sans);
+}
+
+/* Palette specific to the Genesis mockups that shadcn tokens don't cover. */
+@theme {
+  /* Dark code/diff editor panels */
+  --color-editor: #0b1220;
+  --color-editor-panel: #0e1729;
+  --color-editor-border: #1b2740;
+  --color-editor-border-soft: #16223a;
+
+  /* Sidebar / surface tints */
+  --color-surface: #f7f9fc;
+  --color-surface-soft: #fbfcfe;
+  --color-surface-preview: #eef2f8;
+
+  /* Status colors */
+  --color-success: #15803d;
+  --color-success-soft: #e7f8ee;
+  --color-success-dot: #22c55e;
+  --color-warning: #b45309;
+  --color-warning-soft: #fef3e2;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+  }
+}
