@@ -100,11 +100,12 @@ export const useAuthStore = defineStore('auth', () => {
       : null,
   )
 
-  // Real users/{uid}.hl field — server-managed, false until HighLevel OAuth ships.
+  // Real users/{uid}.hl mirror — server-managed by the HighLevel OAuth exchange.
+  // Scopes live in the server-only hlConnections doc; read them via GET /oauth/hl/status.
   const hl = computed<HlConnection>(() => ({
     connected: profile.value?.hl.connected ?? false,
-    locationName: '',
-    locationType: '',
+    locationName: profile.value?.hl.locationName ?? '',
+    locationType: profile.value?.hl.connected ? 'Location' : '',
     scopes: [],
   }))
 
@@ -163,5 +164,7 @@ export const useAuthStore = defineStore('auth', () => {
     signUp,
     signOut,
     getIdToken,
+    /** Re-fetch users/{uid}, e.g. after the HighLevel OAuth callback lands. */
+    refreshProfile: loadProfile,
   }
 })

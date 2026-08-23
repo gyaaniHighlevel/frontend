@@ -30,6 +30,13 @@ declare module 'vue-router/auto-routes' {
       Record<never, never>,
       | never
     >,
+    '/oauth/callback': RouteRecordInfo<
+      '/oauth/callback',
+      '/oauth/callback',
+      Record<never, never>,
+      Record<never, never>,
+      | never
+    >,
     '/p/[projectId]': RouteRecordInfo<
       '/p/[projectId]',
       '/p/:projectId',
@@ -74,6 +81,12 @@ declare module 'vue-router/auto-routes' {
     'src/pages/(home).vue': {
       routes:
         | '/(home)'
+      views:
+        | never
+    }
+    'src/pages/oauth/callback.vue': {
+      routes:
+        | '/oauth/callback'
       views:
         | never
     }

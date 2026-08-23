@@ -42,11 +42,11 @@ export interface Snapshot {
   files: SnapshotEntry[]
 }
 
-/** users/{uid} — hl.connected is server-managed and false until OAuth ships. */
+/** users/{uid} — `hl` is a server-managed mirror of the HighLevel connection. */
 export interface UserProfile {
   email: string
   displayName: string | null
-  hl: { connected: boolean }
+  hl: { connected: boolean; locationId?: string; locationName?: string }
 }
 
 export interface HlApiCall {

@@ -58,7 +58,7 @@ export interface ProfileWire {
   email: string
   displayName: string | null
   createdAt: TimestampJson
-  hl: { connected: boolean }
+  hl: { connected: boolean; locationId?: string; locationName?: string }
 }
 
 export const mapProject = (w: ProjectWire): Project => ({
@@ -92,7 +92,7 @@ export const mapSnapshot = (w: SnapshotWire): Snapshot => ({
 export const mapProfile = (w: ProfileWire): UserProfile => ({
   email: w.email,
   displayName: w.displayName,
-  hl: { connected: w.hl.connected },
+  hl: { connected: w.hl.connected, locationId: w.hl.locationId, locationName: w.hl.locationName },
 })
 
 // --- Callables (mutations go through these; the SDK handles ID tokens) ---
