@@ -9,6 +9,9 @@ import {
   type User,
 } from 'firebase/auth'
 import { firebaseAuth } from '@/lib/firebase'
+import { api, ApiError } from '@/lib/api'
+import { createUserProfile, mapProfile, type ProfileWire } from '@/lib/backend'
+import type { UserProfile } from '@/types'
 
 export interface AuthUser {
   email: string
@@ -27,19 +30,56 @@ export interface HlConnection {
  * Firebase-backed auth store (auth-implementation.md §4). Sessions persist via
  * the SDK's browserLocalPersistence; `ready` resolves once the first
  * onAuthStateChanged fires, so router guards never read a stale null user.
+ *
+ * The backend user profile (users/{uid}) is bootstrapped on sign-in/up via the
+ * idempotent createUserProfile callable (frontend-integration.md §5) and
+ * fetched on session restore.
  */
 export const useAuthStore = defineStore('auth', () => {
   const firebaseUser = shallowRef<User | null>(null)
   const authReady = ref(false)
+  const profile = ref<UserProfile | null>(null)
+
+  // Set while signIn/signUp run their own bootstrap, so the auth listener's
+  // restore-path fetch doesn't race createUserProfile with an empty payload.
+  let authFlowActive = false
 
   let resolveReady: () => void
   const ready = new Promise<void>((resolve) => {
     resolveReady = resolve
   })
 
+  async function fetchProfile(): Promise<void> {
+    profile.value = mapProfile(await api<ProfileWire>('GET', '/users/me'))
+  }
+
+  /**
+   * Idempotent profile bootstrap (§5): safe on both signup and sign-in, and
+   * self-heals accounts whose profile call failed the first time.
+   */
+  async function bootstrapProfile(displayName?: string): Promise<void> {
+    await createUserProfile(displayName ? { displayName } : {})
+    await fetchProfile()
+  }
+
+  /** Session-restore path: profile should already exist; heal a 404 once. */
+  async function loadProfile(): Promise<void> {
+    try {
+      await fetchProfile()
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 404) {
+        await bootstrapProfile().catch((err) => console.error('profile self-heal failed:', err))
+      } else {
+        console.error('profile fetch failed:', e)
+      }
+    }
+  }
+
   // Single writer for auth state: sign-in/up/out all land here.
   onAuthStateChanged(firebaseAuth, (u) => {
     firebaseUser.value = u
+    if (!u) profile.value = null
+    else if (!authFlowActive && !profile.value) void loadProfile()
     if (!authReady.value) {
       authReady.value = true
       resolveReady()
@@ -50,20 +90,23 @@ export const useAuthStore = defineStore('auth', () => {
     firebaseUser.value
       ? {
           email: firebaseUser.value.email ?? '',
-          displayName: firebaseUser.value.displayName ?? firebaseUser.value.email ?? 'Account',
+          displayName:
+            profile.value?.displayName ??
+            firebaseUser.value.displayName ??
+            firebaseUser.value.email ??
+            'Account',
           plan: 'Free plan',
         }
       : null,
   )
 
-  // Mock until the users/{uid} Firestore mirror lands (auth-implementation.md §4.1);
-  // no Firestore database exists yet.
-  const hl = ref<HlConnection>({
-    connected: true,
-    locationName: 'Northbeam Media',
-    locationType: 'Agency',
-    scopes: ['Contacts', 'Conversations', 'Calendars'],
-  })
+  // Real users/{uid}.hl field — server-managed, false until HighLevel OAuth ships.
+  const hl = computed<HlConnection>(() => ({
+    connected: profile.value?.hl.connected ?? false,
+    locationName: '',
+    locationType: '',
+    scopes: [],
+  }))
 
   const initials = computed(() =>
     (user.value?.displayName ?? '')
@@ -75,14 +118,27 @@ export const useAuthStore = defineStore('auth', () => {
   )
 
   async function signIn(email: string, password: string) {
-    await signInWithEmailAndPassword(firebaseAuth, email, password)
+    authFlowActive = true
+    try {
+      await signInWithEmailAndPassword(firebaseAuth, email, password)
+      // Non-fatal: the session is valid even if the profile call hiccups.
+      await bootstrapProfile().catch((e) => console.error('profile bootstrap failed:', e))
+    } finally {
+      authFlowActive = false
+    }
   }
 
   async function signUp(displayName: string, email: string, password: string) {
-    const cred = await createUserWithEmailAndPassword(firebaseAuth, email, password)
-    await updateProfile(cred.user, { displayName })
-    // updateProfile mutates the same User object, so force dependents to recompute.
-    triggerRef(firebaseUser)
+    authFlowActive = true
+    try {
+      const cred = await createUserWithEmailAndPassword(firebaseAuth, email, password)
+      await updateProfile(cred.user, { displayName })
+      // updateProfile mutates the same User object, so force dependents to recompute.
+      triggerRef(firebaseUser)
+      await bootstrapProfile(displayName).catch((e) => console.error('profile bootstrap failed:', e))
+    } finally {
+      authFlowActive = false
+    }
   }
 
   async function signOut() {
@@ -95,5 +151,17 @@ export const useAuthStore = defineStore('auth', () => {
     return firebaseUser.value.getIdToken(force)
   }
 
-  return { firebaseUser, user, hl, initials, authReady, ready, signIn, signUp, signOut, getIdToken }
+  return {
+    firebaseUser,
+    user,
+    profile,
+    hl,
+    initials,
+    authReady,
+    ready,
+    signIn,
+    signUp,
+    signOut,
+    getIdToken,
+  }
 })

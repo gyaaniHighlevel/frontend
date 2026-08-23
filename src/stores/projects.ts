@@ -1,87 +1,87 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
+import { api } from '@/lib/api'
+import {
+  backendErrorMessage,
+  createProject as createProjectFn,
+  mapProject,
+  renameProject as renameProjectFn,
+  restoreProject as restoreProjectFn,
+  softDeleteProject as softDeleteProjectFn,
+  type ProjectWire,
+} from '@/lib/backend'
 import type { Project } from '@/types'
 
-const demoProjects: Project[] = [
-  {
-    id: 'contacts-calendar-hub',
-    name: 'Contacts & Calendar Hub',
-    description: 'Recent contacts with upcoming appointments in one view.',
-    initials: 'CH',
-    iconBg: '#e6efff',
-    iconColor: '#1d4ed8',
-    status: 'published',
-    scopes: ['contacts', 'calendars'],
-    version: 14,
-    editedLabel: '12 min ago',
-  },
-  {
-    id: 'inbox-triage',
-    name: 'Inbox Triage',
-    description: 'Sorts unread conversations by SLA breach risk.',
-    initials: 'IT',
-    iconBg: '#ede9fe',
-    iconColor: '#7c3aed',
-    status: 'generating',
-    scopes: ['conversations'],
-    version: 1,
-    editedLabel: 'now',
-    statusNote: 'Writing app.js',
-    progress: 62,
-  },
-  {
-    id: 'review-requests',
-    name: 'Review Requests',
-    description: 'Sends review asks after completed appointments.',
-    initials: 'RR',
-    iconBg: '#fff1e6',
-    iconColor: '#c2410c',
-    status: 'draft',
-    scopes: ['conversations', 'calendars'],
-    version: 3,
-    editedLabel: 'yesterday',
-  },
-  {
-    id: 'no-show-tracker',
-    name: 'No-show Tracker',
-    description: 'Flags repeat no-shows across every calendar.',
-    initials: 'NS',
-    iconBg: '#e6efff',
-    iconColor: '#1d4ed8',
-    status: 'published',
-    scopes: ['calendars'],
-    version: 9,
-    editedLabel: '3 days ago',
-  },
-  {
-    id: 'lead-router',
-    name: 'Lead Router',
-    description: 'Assigns inbound leads to the right sub-account.',
-    initials: 'LR',
-    iconBg: '#e6f6fb',
-    iconColor: '#0369a1',
-    status: 'failed',
-    scopes: ['contacts'],
-    version: 2,
-    statusNote: 'scope missing: contacts.write',
-    editedLabel: '2h ago',
-  },
-]
-
-/** Mock projects store; Firestore listeners (LLD §10.1) replace this later. */
+/**
+ * Real projects store (frontend-integration.md §6): the list comes from
+ * `GET /projects`, mutations go through the callables.
+ */
 export const useProjectsStore = defineStore('projects', () => {
-  const projects = ref<Project[]>([...demoProjects])
-
-  const publishedCount = computed(
-    () => projects.value.filter((p) => p.status === 'published').length,
-  )
+  const projects = ref<Project[]>([])
+  const deletedProjects = ref<Project[]>([])
+  const loading = ref(false)
+  const error = ref<string | null>(null)
+  const loaded = ref(false)
 
   const recentNames = computed(() => projects.value.slice(0, 3).map((p) => p.name))
 
-  /** Dev-only helper for reviewing the dashboard's empty state. */
-  function toggleDemoData() {
-    projects.value = projects.value.length > 0 ? [] : [...demoProjects]
+  async function fetchProjects(): Promise<void> {
+    loading.value = true
+    error.value = null
+    try {
+      const { items } = await api<{ items: ProjectWire[] }>('GET', '/projects?status=active&limit=100')
+      projects.value = items.map(mapProject)
+      loaded.value = true
+    } catch (e) {
+      error.value = backendErrorMessage(e)
+    } finally {
+      loading.value = false
+    }
   }
 
-  return { projects, publishedCount, recentNames, toggleDemoData }
+  async function fetchDeleted(): Promise<void> {
+    const { items } = await api<{ items: ProjectWire[] }>('GET', '/projects?status=deleted&limit=100')
+    deletedProjects.value = items.map(mapProject)
+  }
+
+  /** Creates a project (backend seeds the starter files) → new projectId. */
+  async function createProject(name: string, description?: string): Promise<string> {
+    const { data } = await createProjectFn(description ? { name, description } : { name })
+    return data.projectId
+  }
+
+  async function renameProject(projectId: string, name: string): Promise<void> {
+    await renameProjectFn({ projectId, name })
+    const project = projects.value.find((p) => p.id === projectId)
+    if (project) project.name = name
+  }
+
+  /** Soft delete: files/snapshots survive; the project moves to the trash list. */
+  async function softDeleteProject(projectId: string): Promise<void> {
+    await softDeleteProjectFn({ projectId })
+    const project = projects.value.find((p) => p.id === projectId)
+    projects.value = projects.value.filter((p) => p.id !== projectId)
+    if (project) deletedProjects.value = [{ ...project, status: 'deleted' }, ...deletedProjects.value]
+  }
+
+  async function restoreProject(projectId: string): Promise<void> {
+    await restoreProjectFn({ projectId })
+    deletedProjects.value = deletedProjects.value.filter((p) => p.id !== projectId)
+    await fetchProjects()
+  }
+
+  return {
+    projects,
+    deletedProjects,
+    loading,
+    loaded,
+    error,
+    recentNames,
+    fetchProjects,
+    fetchDeleted,
+    createProject,
+    renameProject,
+    softDeleteProject,
+    restoreProject,
+  }
 })

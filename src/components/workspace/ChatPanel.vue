@@ -138,7 +138,7 @@ function requestFix() {
           v-model="workspace.prompt"
           rows="1"
           placeholder="Ask for a change…"
-          :disabled="workspace.generationStatus === 'streaming'"
+          :disabled="workspace.busy"
           class="resize-none text-[13.5px] leading-snug text-foreground outline-none placeholder:text-[#98a3b4] disabled:opacity-50"
           @keydown.meta.enter="workspace.sendPrompt()"
         />
@@ -146,11 +146,11 @@ function requestFix() {
           <span class="font-mono text-[11.5px] leading-none text-[#a8b2c1]">⌘⏎ to send</span>
           <button
             type="button"
-            :disabled="workspace.generationStatus === 'streaming'"
+            :disabled="workspace.busy"
             class="rounded-[7px] bg-primary px-[13px] py-1.5 text-xs leading-none font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
             @click="workspace.sendPrompt()"
           >
-            {{ workspace.generationStatus === 'streaming' ? 'Generating…' : 'Send' }}
+            {{ workspace.busy ? 'Generating…' : 'Send' }}
           </button>
         </div>
       </div>

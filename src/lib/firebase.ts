@@ -1,5 +1,7 @@
 import { initializeApp } from 'firebase/app'
-import { getAuth } from 'firebase/auth'
+import { connectAuthEmulator, getAuth } from 'firebase/auth'
+import { connectFirestoreEmulator, getFirestore } from 'firebase/firestore'
+import { connectFunctionsEmulator, getFunctions } from 'firebase/functions'
 
 const raw = import.meta.env.VITE_FIREBASE_CONFIG
 
@@ -20,3 +22,12 @@ export const firebaseApp = initializeApp(config)
 
 // browserLocalPersistence (IndexedDB) is the SDK default — sessions survive refresh/restart.
 export const firebaseAuth = getAuth(firebaseApp)
+export const firestore = getFirestore(firebaseApp)
+// Region is mandatory: the backend deploys everything to us-central1.
+export const functions = getFunctions(firebaseApp, 'us-central1')
+
+if (import.meta.env.VITE_USE_EMULATORS === 'true') {
+  connectAuthEmulator(firebaseAuth, 'http://127.0.0.1:9099', { disableWarnings: true })
+  connectFirestoreEmulator(firestore, '127.0.0.1', 8080)
+  connectFunctionsEmulator(functions, '127.0.0.1', 5001)
+}

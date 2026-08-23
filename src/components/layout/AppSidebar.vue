@@ -14,12 +14,7 @@ async function signOut() {
   router.push({ name: '/signin' })
 }
 
-const navItems = [
-  { label: 'Projects', active: true },
-  { label: 'Templates', active: false },
-  { label: 'Marketplace', active: false },
-  { label: 'Settings', active: false },
-]
+const navItems = [{ label: 'Projects', active: true }]
 </script>
 
 <template>
