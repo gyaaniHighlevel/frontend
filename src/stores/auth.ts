@@ -1,5 +1,14 @@
-import { computed, ref } from 'vue'
+import { computed, ref, shallowRef, triggerRef } from 'vue'
 import { defineStore } from 'pinia'
+import {
+  createUserWithEmailAndPassword,
+  onAuthStateChanged,
+  signInWithEmailAndPassword,
+  signOut as firebaseSignOut,
+  updateProfile,
+  type User,
+} from 'firebase/auth'
+import { firebaseAuth } from '@/lib/firebase'
 
 export interface AuthUser {
   email: string
@@ -15,16 +24,40 @@ export interface HlConnection {
 }
 
 /**
- * Mock auth store. The Firebase Auth wiring (LLD §3) replaces the bodies of
- * signIn/signUp/signOut later; the shape is what views depend on.
+ * Firebase-backed auth store (auth-implementation.md §4). Sessions persist via
+ * the SDK's browserLocalPersistence; `ready` resolves once the first
+ * onAuthStateChanged fires, so router guards never read a stale null user.
  */
 export const useAuthStore = defineStore('auth', () => {
-  const user = ref<AuthUser | null>({
-    email: 'ravi@northbeam.media',
-    displayName: 'Ravi Shah',
-    plan: 'Free plan',
+  const firebaseUser = shallowRef<User | null>(null)
+  const authReady = ref(false)
+
+  let resolveReady: () => void
+  const ready = new Promise<void>((resolve) => {
+    resolveReady = resolve
   })
 
+  // Single writer for auth state: sign-in/up/out all land here.
+  onAuthStateChanged(firebaseAuth, (u) => {
+    firebaseUser.value = u
+    if (!authReady.value) {
+      authReady.value = true
+      resolveReady()
+    }
+  })
+
+  const user = computed<AuthUser | null>(() =>
+    firebaseUser.value
+      ? {
+          email: firebaseUser.value.email ?? '',
+          displayName: firebaseUser.value.displayName ?? firebaseUser.value.email ?? 'Account',
+          plan: 'Free plan',
+        }
+      : null,
+  )
+
+  // Mock until the users/{uid} Firestore mirror lands (auth-implementation.md §4.1);
+  // no Firestore database exists yet.
   const hl = ref<HlConnection>({
     connected: true,
     locationName: 'Northbeam Media',
@@ -41,17 +74,26 @@ export const useAuthStore = defineStore('auth', () => {
       .slice(0, 2),
   )
 
-  function signIn(email: string, _password: string) {
-    user.value = { email, displayName: 'Ravi Shah', plan: 'Free plan' }
+  async function signIn(email: string, password: string) {
+    await signInWithEmailAndPassword(firebaseAuth, email, password)
   }
 
-  function signUp(displayName: string, email: string, _password: string) {
-    user.value = { email, displayName, plan: 'Free plan' }
+  async function signUp(displayName: string, email: string, password: string) {
+    const cred = await createUserWithEmailAndPassword(firebaseAuth, email, password)
+    await updateProfile(cred.user, { displayName })
+    // updateProfile mutates the same User object, so force dependents to recompute.
+    triggerRef(firebaseUser)
   }
 
-  function signOut() {
-    user.value = null
+  async function signOut() {
+    await firebaseSignOut(firebaseAuth)
   }
 
-  return { user, hl, initials, signIn, signUp, signOut }
+  /** Per-request ID token for Cloud Function calls (auth-implementation.md §6.1). */
+  async function getIdToken(force = false): Promise<string> {
+    if (!firebaseUser.value) throw new Error('not-signed-in')
+    return firebaseUser.value.getIdToken(force)
+  }
+
+  return { firebaseUser, user, hl, initials, authReady, ready, signIn, signUp, signOut, getIdToken }
 })

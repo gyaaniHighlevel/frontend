@@ -1,6 +1,11 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
+
+definePage({
+  meta: { requiresAuth: true },
+})
+
 import { FlaskConical } from '@lucide/vue'
 import AppSidebar from '@/components/layout/AppSidebar.vue'
 import ProjectCard from '@/components/dashboard/ProjectCard.vue'

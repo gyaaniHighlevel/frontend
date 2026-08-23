@@ -1,10 +1,18 @@
 <script setup lang="ts">
+import { useRouter } from 'vue-router'
+import { LogOut } from '@lucide/vue'
 import ConnectHL from '@/components/ConnectHL.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useProjectsStore } from '@/stores/projects'
 
+const router = useRouter()
 const auth = useAuthStore()
 const projects = useProjectsStore()
+
+async function signOut() {
+  await auth.signOut()
+  router.push({ name: '/signin' })
+}
 
 const navItems = [
   { label: 'Projects', active: true },
@@ -57,12 +65,21 @@ const navItems = [
       >
         {{ auth.initials }}
       </div>
-      <div>
-        <div class="text-[12.5px] leading-tight font-semibold text-foreground">
+      <div class="min-w-0 flex-1">
+        <div class="truncate text-[12.5px] leading-tight font-semibold text-foreground">
           {{ auth.user?.displayName }}
         </div>
         <div class="text-[11.5px] leading-tight text-[#8894a6]">{{ auth.user?.plan }}</div>
       </div>
+      <button
+        type="button"
+        class="rounded-md p-1.5 text-[#8894a6] transition-colors hover:bg-white hover:text-foreground"
+        aria-label="Sign out"
+        title="Sign out"
+        @click="signOut"
+      >
+        <LogOut class="size-4" />
+      </button>
     </div>
   </aside>
 </template>

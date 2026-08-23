@@ -4,6 +4,10 @@ import EditorPanel from '@/components/workspace/EditorPanel.vue'
 import PreviewPanel from '@/components/workspace/PreviewPanel.vue'
 import SnapshotSheet from '@/components/workspace/SnapshotSheet.vue'
 import WorkspaceTopBar from '@/components/workspace/WorkspaceTopBar.vue'
+
+definePage({
+  meta: { requiresAuth: true },
+})
 </script>
 
 <template>
