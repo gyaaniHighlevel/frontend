@@ -1,1 +1,13 @@
 # frontend
+
+Genesis — AI-powered HighLevel app builder (frontend). Vue 3 + TypeScript + Vite + Tailwind CSS v4 + shadcn-vue.
+
+This phase is UI-plus-preview-runtime using Firebase, the generation SSE client, and the HighLevel proxy wiring.
+
+## Run
+
+```sh
+npm install
+npm run dev        # http://localhost:5173
+npm run build      # typecheck + production build
+```
