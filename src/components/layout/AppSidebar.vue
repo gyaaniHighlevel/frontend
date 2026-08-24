@@ -3,11 +3,9 @@ import { useRouter } from 'vue-router'
 import { LogOut } from '@lucide/vue'
 import ConnectHL from '@/components/ConnectHL.vue'
 import { useAuthStore } from '@/stores/auth'
-import { useProjectsStore } from '@/stores/projects'
 
 const router = useRouter()
 const auth = useAuthStore()
-const projects = useProjectsStore()
 
 async function signOut() {
   await auth.signOut()

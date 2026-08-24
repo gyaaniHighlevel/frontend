@@ -31,6 +31,10 @@ async function commitRename() {
     savingName.value = false
   }
 }
+
+async function handleSaveChanges() {
+  await workspace.commitManualChanges()
+}
 </script>
 
 <template>
@@ -83,6 +87,14 @@ async function commitRename() {
       </span>
     </div>
     <div class="flex items-center gap-[9px]">
+      <button
+        v-if="workspace.hasUnsavedChanges && !workspace.busy"
+        type="button"
+        class="rounded-[7px] border border-[#3b82f6] bg-[#3b82f6] px-[13px] py-[7px] text-[12.5px] leading-none font-medium text-white hover:bg-[#2563eb] hover:border-[#2563eb]"
+        @click="handleSaveChanges"
+      >
+        Save Changes
+      </button>
       <button
         type="button"
         class="rounded-[7px] border border-[#dfe4ec] px-[13px] py-[7px] text-[12.5px] leading-none font-medium text-[#475569] hover:bg-surface"

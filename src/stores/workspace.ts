@@ -77,13 +77,14 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   const loading = ref(false)
   const loadError = ref<string | null>(null)
 
-  const prompt = ref('')
-  const saved = ref(true)
-  const model = ref('claude')
-  const tokensLabel = ref('')
-  const generationStatus = ref<'idle' | 'requesting' | 'streaming' | 'committing'>('idle')
-  const generationId = ref<string | null>(null)
-  const busy = computed(() => generationStatus.value !== 'idle')
+   const prompt = ref('')
+   const saved = ref(true)
+   const hasUnsavedChanges = ref(false)
+   const model = ref('claude')
+   const tokensLabel = ref('')
+   const generationStatus = ref<'idle' | 'requesting' | 'streaming' | 'committing'>('idle')
+   const generationId = ref<string | null>(null)
+   const busy = computed(() => generationStatus.value !== 'idle')
 
   const projectName = computed(() => project.value?.name ?? '…')
   const version = computed(() => snapshots.value.length)
@@ -284,6 +285,53 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     if (!projectId.value || !trimmed || trimmed === project.value?.name) return
     await renameProjectFn({ projectId: projectId.value, name: trimmed })
     if (project.value) project.value = { ...project.value, name: trimmed }
+  }
+
+  /** Update file content and mark as having unsaved changes. */
+  function updateFileContent(path: string, content: string): void {
+    const file = files.value.find((f) => f.path === path)
+    if (file) {
+      file.content = content
+      hasUnsavedChanges.value = true
+      rebuildPreview()
+    }
+  }
+
+  /** Commit manual changes by creating a new snapshot. */
+  async function commitManualChanges(): Promise<void> {
+    const pid = projectId.value
+    if (!pid || !hasUnsavedChanges.value || busy.value) return
+
+    generationStatus.value = 'committing'
+    try {
+      // Update all files in Firestore
+      const batch = writeBatch(firestore)
+      for (const file of files.value) {
+        batch.update(doc(firestore, 'projects', pid, 'files', fileId(file.path)), {
+          content: file.content,
+          size: byteSize(file.content),
+          sha256: await sha256hex(file.content),
+          updatedAt: serverTimestamp(),
+          updatedBy: 'user',
+        })
+      }
+      await batch.commit()
+
+      // Create a snapshot with trigger 'manual'
+      await saveSnapshotFn({ projectId: pid })
+
+      // Refresh to get the new snapshot and updated project
+      await Promise.all([refreshFiles(pid), refreshSnapshots(pid), refreshProject(pid)])
+
+      hasUnsavedChanges.value = false
+      rebuildPreview()
+      generationStatus.value = 'idle'
+    } catch (e) {
+      console.error('Failed to commit manual changes:', e)
+      generationStatus.value = 'idle'
+      // Re-sync the working tree with the server after a failure
+      await refreshFiles(pid).catch(() => undefined)
+    }
   }
 
   // --- Generation (§7): SSE streaming or mock seed files -------
@@ -592,6 +640,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     projectName,
     version,
     saved,
+    hasUnsavedChanges,
     model,
     tokensLabel,
     loading,
@@ -621,5 +670,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     reportPreviewError,
     sendPrompt,
     restoreViewingVersion,
+    updateFileContent,
+    commitManualChanges,
   }
 })

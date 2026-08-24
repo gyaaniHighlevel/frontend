@@ -26,6 +26,48 @@ watch(
     codeScroller.value?.scrollTo({ top: codeScroller.value.scrollHeight })
   },
 )
+
+// Track if we're editing to show the textarea
+const isEditing = ref(false)
+const editContent = ref('')
+
+// When switching files or when generation completes, exit edit mode
+watch(
+  () => workspace.activeFilePath,
+  () => {
+    isEditing.value = false
+  },
+)
+
+watch(
+  () => workspace.generationStatus,
+  (status) => {
+    if (status !== 'idle') {
+      isEditing.value = false
+    }
+  },
+)
+
+function startEditing() {
+  if (workspace.generationStatus !== 'idle') return
+  editContent.value = workspace.activeFile.content
+  isEditing.value = true
+  nextTick(() => {
+    const textarea = document.querySelector('.code-editor-textarea') as HTMLTextAreaElement
+    textarea?.focus()
+  })
+}
+
+function cancelEditing() {
+  isEditing.value = false
+  editContent.value = ''
+}
+
+function saveEditing() {
+  workspace.updateFileContent(workspace.activeFilePath, editContent.value)
+  isEditing.value = false
+  editContent.value = ''
+}
 </script>
 
 <template>
@@ -74,14 +116,41 @@ watch(
       </div>
 
       <!-- Code -->
-      <div ref="codeScroller" class="flex-1 overflow-auto py-3.5 font-mono text-xs leading-[1.85]">
-        <div v-for="(line, i) in codeLines" :key="i" class="flex px-3.5">
-          <span class="w-8 shrink-0 text-[#3c4a63]">{{ i + 1 }}</span>
-          <span class="whitespace-pre">
-            <span v-for="(seg, j) in line.seg" :key="j" :style="{ color: seg.c ?? '#cbd5e1' }">{{
-              seg.t
-            }}</span>
-          </span>
+      <div class="flex-1 overflow-hidden flex flex-col">
+        <!-- Edit mode: textarea -->
+        <textarea
+          v-if="isEditing"
+          v-model="editContent"
+          class="code-editor-textarea flex-1 resize-none bg-editor p-3.5 font-mono text-xs leading-[1.85] text-[#cbd5e1] outline-none border-none"
+          @keydown.escape="cancelEditing"
+        />
+        <!-- Read mode: syntax highlighted code -->
+        <div v-else ref="codeScroller" class="flex-1 overflow-auto py-3.5 font-mono text-xs leading-[1.85] cursor-text" @click="startEditing">
+          <div v-for="(line, i) in codeLines" :key="i" class="flex px-3.5">
+            <span class="w-8 shrink-0 text-[#3c4a63]">{{ i + 1 }}</span>
+            <span class="whitespace-pre">
+              <span v-for="(seg, j) in line.seg" :key="j" :style="{ color: seg.c ?? '#cbd5e1' }">{{
+                seg.t
+              }}</span>
+            </span>
+          </div>
+        </div>
+        <!-- Edit mode: action buttons -->
+        <div v-if="isEditing" class="flex gap-2 border-t border-editor-border bg-editor-panel px-3.5 py-2">
+          <button
+            type="button"
+            class="rounded px-3 py-1 text-xs font-medium bg-[#3b82f6] text-white hover:bg-[#2563eb]"
+            @click="saveEditing"
+          >
+            Save
+          </button>
+          <button
+            type="button"
+            class="rounded px-3 py-1 text-xs font-medium bg-[#4b5563] text-[#cbd5e1] hover:bg-[#5a6577]"
+            @click="cancelEditing"
+          >
+            Cancel
+          </button>
         </div>
       </div>
     </div>
