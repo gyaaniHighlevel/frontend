@@ -35,9 +35,13 @@ import { buildSrcdoc, ALLOWED_PATHS } from '@/lib/previewBuilder'
 import { relativeTime } from '@/lib/utils'
 import { diffLines } from '@/lib/diff'
 import { seedFiles } from './seedFiles'
+import { readSseStream, type SseEvent } from '@/lib/sseClient'
 
 /** Base URL of the `api` function — the HL proxy lives under /hl on it. */
 const PROXY_URL = import.meta.env.VITE_API_BASE as string | undefined
+
+/** Mock LLM flag: if true, use seed files instead of real generation. */
+const MOCK_LLM = import.meta.env.VITE_MOCK_LLM === 'true'
 
 const FILE_ORDER: Record<string, number> = { 'index.html': 0, 'app.js': 1, 'styles.css': 2 }
 const byPath = (a: ProjectFile, b: ProjectFile) =>
@@ -76,8 +80,9 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   const prompt = ref('')
   const saved = ref(true)
   const model = ref('claude')
-  const tokensLabel = ref('LLM mocked')
-  const generationStatus = ref<'idle' | 'streaming' | 'saving'>('idle')
+  const tokensLabel = ref('')
+  const generationStatus = ref<'idle' | 'requesting' | 'streaming' | 'committing'>('idle')
+  const generationId = ref<string | null>(null)
   const busy = computed(() => generationStatus.value !== 'idle')
 
   const projectName = computed(() => project.value?.name ?? '…')
@@ -281,7 +286,52 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     if (project.value) project.value = { ...project.value, name: trimmed }
   }
 
-  // --- Mock "send" (§8): seed files → Firestore batch → saveSnapshot -------
+  // --- Generation (§7): SSE streaming or mock seed files -------
+
+  /** Attach listener to generation doc for fallback (§7.9). */
+  function attachGenerationListener(pid: string, genId: string) {
+    unsubs.push(
+      onSnapshot(
+        doc(firestore, 'projects', pid, 'generations', genId),
+        (snap) => {
+          const data = snap.data()
+          if (!data) return
+          const status = data.status as string
+          const usage = data.usage as { inputTokens: number; outputTokens: number; cacheReadTokens: number } | null
+
+          // Update token label from real usage
+          if (usage) {
+            const total = usage.inputTokens + usage.outputTokens + (usage.cacheReadTokens ?? 0)
+            tokensLabel.value = `${total.toLocaleString()} tokens`
+          }
+
+          // Handle terminal states
+          if (status === 'completed') {
+            generationStatus.value = 'committing'
+            // Refresh to get the new snapshot and files
+            Promise.all([refreshFiles(pid), refreshSnapshots(pid), refreshProject(pid)])
+              .then(() => {
+                rebuildPreview()
+                generationStatus.value = 'idle'
+              })
+              .catch((e) => {
+                console.error('Failed to refresh after generation:', e)
+                generationStatus.value = 'idle'
+              })
+          } else if (status === 'failed') {
+            const error = data.error as { code: string; message: string } | null
+            messages.value.push({
+              id: localId(),
+              role: 'assistant',
+              text: `Generation failed: ${error?.message ?? 'Unknown error'}`,
+            })
+            generationStatus.value = 'idle'
+          }
+        },
+        (e) => console.error('generation listener failed:', e),
+      ),
+    )
+  }
 
   async function sendPrompt(): Promise<void> {
     const text = prompt.value.trim()
@@ -290,7 +340,6 @@ export const useWorkspaceStore = defineStore('workspace', () => {
 
     messages.value.push({ id: localId(), role: 'user', text })
     prompt.value = ''
-    generationStatus.value = 'streaming'
     saved.value = false
 
     // 1. Persist the chat message (UI history only; rules require role 'user').
@@ -305,59 +354,144 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     }
 
     try {
-      // 2. Stream the seed tree into the editor (mock LLM typing).
-      const targets = seedFiles.map((f) => ({ ...f }))
-      for (const target of targets) {
-        const file = files.value.find((f) => f.path === target.path)
-        if (!file) continue
-        activeFilePath.value = target.path // file_start: open/focus tab
-        file.content = ''
-        for (let i = 0; i < target.content.length; i += 64) {
-          file.content += target.content.slice(i, i + 64) // file_delta
-          await sleep(8)
+      if (MOCK_LLM) {
+        // Mock flow: stream seed files into editor
+        generationStatus.value = 'streaming'
+        const targets = seedFiles.map((f) => ({ ...f }))
+        for (const target of targets) {
+          const file = files.value.find((f) => f.path === target.path)
+          if (!file) continue
+          activeFilePath.value = target.path
+          file.content = ''
+          for (let i = 0; i < target.content.length; i += 64) {
+            file.content += target.content.slice(i, i + 64)
+            await sleep(8)
+          }
         }
-      }
 
-      // 3. Write all three files in ONE batch (atomic — never a half-updated
-      //    tree). sha256/size must be computed, never guessed (§8).
-      generationStatus.value = 'saving'
-      const batch = writeBatch(firestore)
-      for (const target of targets) {
-        batch.update(doc(firestore, 'projects', pid, 'files', fileId(target.path)), {
-          content: target.content,
-          size: byteSize(target.content),
-          sha256: await sha256hex(target.content),
-          updatedAt: serverTimestamp(),
-          updatedBy: 'user', // rules reject anything else from the client
+        generationStatus.value = 'committing'
+        const batch = writeBatch(firestore)
+        for (const target of targets) {
+          batch.update(doc(firestore, 'projects', pid, 'files', fileId(target.path)), {
+            content: target.content,
+            size: byteSize(target.content),
+            sha256: await sha256hex(target.content),
+            updatedAt: serverTimestamp(),
+            updatedBy: 'user',
+          })
+        }
+        await batch.commit()
+        await saveSnapshotFn({ projectId: pid, label: text.slice(0, 80) })
+        await Promise.all([refreshFiles(pid), refreshSnapshots(pid), refreshProject(pid)])
+
+        messages.value.push({
+          id: localId(),
+          role: 'assistant',
+          text: 'Rebuilt the app from your prompt and saved a new version.',
+          checklist: ['Wrote 3 files', `Snapshot v${snapshots.value.length} saved`, 'Preview reloaded'],
+          filesChanged: [...ALLOWED_PATHS],
         })
+        saved.value = true
+        rebuildPreview()
+        generationStatus.value = 'idle'
+      } else {
+        // Real SSE flow: POST /generate
+        generationStatus.value = 'requesting'
+        const token = await firebaseAuth.currentUser?.getIdToken()
+        if (!token) throw new Error('No auth token')
+
+        const generateUrl = `${PROXY_URL}/generate`
+        let narration = ''
+        let assistantMessageId = localId()
+
+        await readSseStream(
+          generateUrl,
+          token,
+          (event: SseEvent) => {
+            switch (event.type) {
+            case 'meta': {
+              const genId = event.data.generationId as string
+              generationId.value = genId
+              generationStatus.value = 'streaming'
+              attachGenerationListener(pid, genId)
+              break
+            }
+            case 'text': {
+              const delta = event.data.delta as string
+              narration += delta
+              const lastMsg = messages.value[messages.value.length - 1]
+              if (lastMsg?.role === 'assistant' && lastMsg.id === assistantMessageId) {
+                lastMsg.text = narration
+              } else {
+                messages.value.push({
+                  id: assistantMessageId,
+                  role: 'assistant',
+                  text: narration,
+                })
+              }
+              break
+            }
+            case 'file_start': {
+              const path = event.data.path as string
+              activeFilePath.value = path
+              const file = files.value.find((f) => f.path === path)
+              if (file) file.content = ''
+              break
+            }
+            case 'file_delta': {
+              const path = event.data.path as string
+              const delta = event.data.delta as string
+              const file = files.value.find((f) => f.path === path)
+              if (file) file.content += delta
+              break
+            }
+            case 'file_end': {
+              break
+            }
+            case 'done': {
+              generationStatus.value = 'committing'
+              const usage = event.data.usage as { inputTokens: number; outputTokens: number; cacheReadTokens: number } | null
+              if (usage) {
+                const total = usage.inputTokens + usage.outputTokens + (usage.cacheReadTokens ?? 0)
+                tokensLabel.value = `${total.toLocaleString()} tokens`
+              }
+              Promise.all([refreshFiles(pid), refreshSnapshots(pid), refreshProject(pid)])
+                .then(() => {
+                  rebuildPreview()
+                  saved.value = true
+                  generationStatus.value = 'idle'
+                })
+                .catch((e) => {
+                  console.error('Failed to refresh after generation:', e)
+                  generationStatus.value = 'idle'
+                })
+              break
+            }
+            case 'error': {
+              const code = event.data.code as string
+              const message = event.data.message as string
+              messages.value.push({
+                id: localId(),
+                role: 'assistant',
+                text: `Generation failed (${code}): ${message}`,
+              })
+              generationStatus.value = 'idle'
+              break
+            }
+            }
+          },
+          { projectId: pid, prompt: text },
+        )
       }
-      await batch.commit()
-
-      // 4. Snapshot server-side: writes content-addressed blobs, creates the
-      //    manifest, advances headSnapshotId. Label carries the prompt.
-      await saveSnapshotFn({ projectId: pid, label: text.slice(0, 80) })
-
-      await Promise.all([refreshFiles(pid), refreshSnapshots(pid), refreshProject(pid)])
-
-      messages.value.push({
-        id: localId(),
-        role: 'assistant',
-        text: 'Rebuilt the app from your prompt and saved a new version. LLM generation is mocked for now — every send writes the same seed app.',
-        checklist: ['Wrote 3 files', `Snapshot v${snapshots.value.length} saved`, 'Preview reloaded'],
-        filesChanged: [...ALLOWED_PATHS],
-      })
-      saved.value = true
-      rebuildPreview()
     } catch (e) {
       messages.value.push({
         id: localId(),
         role: 'assistant',
         text: `Generation failed: ${backendErrorMessage(e)}`,
       })
+      generationStatus.value = 'idle'
       // Re-sync the working tree with the server after a partial failure.
       await refreshFiles(pid).catch(() => undefined)
-    } finally {
-      generationStatus.value = 'idle'
     }
   }
 
