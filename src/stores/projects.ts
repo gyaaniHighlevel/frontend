@@ -23,8 +23,6 @@ export const useProjectsStore = defineStore('projects', () => {
   const error = ref<string | null>(null)
   const loaded = ref(false)
 
-  const recentNames = computed(() => projects.value.slice(0, 3).map((p) => p.name))
-
   async function fetchProjects(): Promise<void> {
     loading.value = true
     error.value = null
@@ -76,7 +74,6 @@ export const useProjectsStore = defineStore('projects', () => {
     loading,
     loaded,
     error,
-    recentNames,
     fetchProjects,
     fetchDeleted,
     createProject,

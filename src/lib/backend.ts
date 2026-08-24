@@ -132,6 +132,11 @@ export const restoreSnapshot = httpsCallable<
   { snapshotId: string; restored: boolean }
 >(functions, 'restoreSnapshot')
 
+export const publishProject = httpsCallable<
+  { projectId: string },
+  { projectId: string; status: 'active' }
+>(functions, 'publishProject')
+
 /**
  * User-facing message for any backend failure. Callables carry the same
  * `{ code, message }` body as REST in `error.details` (§4) — prefer it.

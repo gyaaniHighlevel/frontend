@@ -79,7 +79,7 @@ async function commitRename() {
         class="flex items-center gap-1.5 rounded-full bg-accent px-[9px] py-[3px] text-[11.5px] leading-snug font-semibold text-accent-foreground"
       >
         <span class="size-1.5 animate-pulse rounded-full bg-primary" />
-        {{ workspace.generationStatus === 'saving' ? 'Saving…' : 'Generating…' }}
+        {{ workspace.generationStatus === 'committing' ? 'Saving…' : 'Generating…' }}
       </span>
     </div>
     <div class="flex items-center gap-[9px]">
@@ -89,18 +89,6 @@ async function commitRename() {
         @click="workspace.historyOpen = true"
       >
         History
-      </button>
-      <button
-        type="button"
-        class="rounded-[7px] border border-[#dfe4ec] px-[13px] py-[7px] text-[12.5px] leading-none font-medium text-[#475569] hover:bg-surface"
-      >
-        Scopes
-      </button>
-      <button
-        type="button"
-        class="rounded-[7px] bg-primary px-4 py-[7px] text-[12.5px] leading-none font-semibold text-primary-foreground hover:bg-primary/90"
-      >
-        Publish
       </button>
     </div>
   </header>

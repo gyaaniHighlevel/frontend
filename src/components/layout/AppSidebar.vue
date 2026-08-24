@@ -41,15 +41,6 @@ const navItems = [{ label: 'Projects', active: true }]
       </a>
     </nav>
 
-    <div v-if="projects.recentNames.length" class="flex flex-col gap-2">
-      <div class="font-mono text-[10.5px] font-semibold tracking-[0.1em] uppercase text-[#94a3b8]">
-        Recent
-      </div>
-      <div class="text-[13px] leading-[1.9] font-medium text-[#5b6879]">
-        <div v-for="name in projects.recentNames" :key="name">{{ name }}</div>
-      </div>
-    </div>
-
     <div class="mt-auto">
       <ConnectHL />
     </div>

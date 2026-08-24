@@ -66,9 +66,16 @@ const initials = computed(() =>
           <Trash2 class="size-3.5" />
         </button>
         <span
-          class="rounded-full bg-muted px-[9px] py-1 text-[11px] leading-none font-semibold text-muted-foreground"
+          v-if="project.status === 'deleted'"
+          class="rounded-full bg-warning-soft px-[9px] py-1 text-[11px] leading-none font-semibold text-warning"
         >
-          Draft
+          Deleted
+        </span>
+        <span
+          v-else
+          class="rounded-full bg-success-soft px-[9px] py-1 text-[11px] leading-none font-semibold text-success"
+        >
+          Active
         </span>
       </div>
     </div>

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { onIdTokenChanged, type Unsubscribe } from 'firebase/auth'
+import { RotateCw } from '@lucide/vue'
 import { firebaseAuth } from '@/lib/firebase'
 import { useWorkspaceStore } from '@/stores/workspace'
 
@@ -78,10 +79,11 @@ onBeforeUnmount(() => {
         </button>
         <button
           type="button"
-          class="rounded-md border border-[#e2e7f0] px-2.5 py-[5px]"
+          class="rounded-md border border-[#e2e7f0] p-1.5 text-muted-foreground hover:text-foreground"
+          title="Reload preview"
           @click="workspace.rebuildPreview()"
         >
-          Reload
+          <RotateCw class="size-4" />
         </button>
       </div>
     </div>
