@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { onIdTokenChanged, type Unsubscribe } from 'firebase/auth'
+import { firebaseAuth } from '@/lib/firebase'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 const workspace = useWorkspaceStore()
@@ -7,17 +9,44 @@ const workspace = useWorkspaceStore()
 const device = ref<'desktop' | 'mobile'>('desktop')
 const iframeEl = ref<HTMLIFrameElement>()
 
+/**
+ * genesis:token (LLD §9.3): hand the shim the caller's ID token so hl.* can
+ * reach the proxy. targetOrigin must be '*' — the sandboxed frame's origin is
+ * opaque — but we only ever post to the contentWindow of our own iframe.
+ */
+async function sendToken(forceRefresh = false) {
+  const target = iframeEl.value?.contentWindow
+  const user = firebaseAuth.currentUser
+  if (!target || !user || !workspace.projectId) return
+  try {
+    const token = await user.getIdToken(forceRefresh)
+    target.postMessage({ type: 'genesis:token', token, projectId: workspace.projectId }, '*')
+  } catch (e) {
+    console.error('preview token handoff failed:', e)
+  }
+}
+
 // postMessage listener (LLD §9.3): only trust the iframe we created.
 function onMessage(event: MessageEvent) {
   if (!iframeEl.value || event.source !== iframeEl.value.contentWindow) return
   const data = event.data as { type?: string; message?: string } | null
+  if (data?.type === 'genesis:ready') void sendToken()
+  if (data?.type === 'genesis:token-refresh') void sendToken(true) // shim saw a 401
   if (data?.type === 'genesis:error' && data.message) {
     workspace.reportPreviewError(data.message)
   }
 }
 
-onMounted(() => window.addEventListener('message', onMessage))
-onBeforeUnmount(() => window.removeEventListener('message', onMessage))
+let unsubToken: Unsubscribe | undefined
+onMounted(() => {
+  window.addEventListener('message', onMessage)
+  // Keep the frame's token current across the SDK's ~hourly rotation (§9.3).
+  unsubToken = onIdTokenChanged(firebaseAuth, () => void sendToken())
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('message', onMessage)
+  unsubToken?.()
+})
 </script>
 
 <template>

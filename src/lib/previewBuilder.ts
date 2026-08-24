@@ -64,7 +64,7 @@ export function buildSrcdoc({
 ${esc(file('styles.css'))}
 </style>
 <script>
-window.__GENESIS__ = ${JSON.stringify({ projectId, proxyUrl, mock: true })}
+window.__GENESIS__ = ${JSON.stringify({ projectId, proxyUrl })}
 <\/script>
 <script>
 ${esc(hlSdkSource)}

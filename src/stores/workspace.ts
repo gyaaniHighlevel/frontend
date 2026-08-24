@@ -36,8 +36,8 @@ import { relativeTime } from '@/lib/utils'
 import { diffLines } from '@/lib/diff'
 import { seedFiles } from './seedFiles'
 
-/** Mock stand-in for the deployed proxy's Cloud Run URL (LLD §11). */
-const PROXY_URL = 'https://hl-proxy.genesis.local'
+/** Base URL of the `api` function — the HL proxy lives under /hl on it. */
+const PROXY_URL = import.meta.env.VITE_API_BASE as string | undefined
 
 const FILE_ORDER: Record<string, number> = { 'index.html': 0, 'app.js': 1, 'styles.css': 2 }
 const byPath = (a: ProjectFile, b: ProjectFile) =>
@@ -130,7 +130,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
 
   /** Full iframe reload from the current working tree (decision 6). */
   function rebuildPreview() {
-    if (!projectId.value) return
+    if (!projectId.value || !PROXY_URL) return
     srcdoc.value = buildSrcdoc({
       files: files.value,
       proxyUrl: PROXY_URL,

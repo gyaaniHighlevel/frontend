@@ -1,61 +1,131 @@
 // hl-sdk.js — platform shim inlined into the preview srcdoc (LLD §9.1).
-// Mock build: `window.hl.*` resolves with canned HighLevel data instead of
-// forwarding to the Cloud Function proxy. The postMessage protocol (§9.3/§9.4)
-// is kept so swapping in the real transport later doesn't touch generated code.
+// Real transport: `window.hl.*` forwards to the Cloud Function proxy's /hl
+// whitelist (LLD §6.2) with the caller's Firebase ID token, obtained from the
+// parent via the postMessage handshake (§9.3). Generated code never sees the
+// token — it lives in this closure; connect-src limits where it can go.
 (() => {
-  const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
-  const jitter = () => 150 + Math.random() * 250
+  const PROXY_BASE = String(window.__GENESIS__.proxyUrl || '').replace(/\/+$/, '')
 
-  const MOCK = {
-    contacts: [
-      { id: 'c1', name: 'Dana Whitfield', source: 'Facebook Ad', addedLabel: '2h ago' },
-      { id: 'c2', name: 'Marcus Bell', source: 'Web form', addedLabel: '5h ago' },
-      { id: 'c3', name: 'Priya Raman', source: 'Referral', addedLabel: 'Yesterday' },
-      { id: 'c4', name: 'Tom Alvarez', source: 'Inbound call', addedLabel: 'Yesterday' },
-      { id: 'c5', name: 'Elena Sorkin', source: 'Facebook Ad', addedLabel: '2 days ago' },
-    ],
-    contactsTotal: 128,
-    appointments: [
-      { id: 'a1', title: 'Discovery call', contactName: 'Dana Whitfield', whenLabel: 'Today 2:30 PM', calendar: 'Sales calendar', color: '#1d4ed8' },
-      { id: 'a2', title: 'Onboarding', contactName: 'Marcus Bell', whenLabel: 'Today 4:00 PM', calendar: 'Success calendar', color: '#0ea5e9' },
-      { id: 'a3', title: 'Strategy review', contactName: 'Priya Raman', whenLabel: 'Tomorrow 10:00 AM', calendar: 'Sales calendar', color: '#8b5cf6' },
-      { id: 'a4', title: 'Follow-up', contactName: 'Tom Alvarez', whenLabel: 'Thu 9:15 AM', calendar: 'Sales calendar', color: '#94a3b8' },
-    ],
-    appointmentsTotal: 31,
-    calendars: [
-      { id: 'cal1', name: 'Sales calendar' },
-      { id: 'cal2', name: 'Success calendar' },
-    ],
-    conversationsUnread: 9,
+  // Error contract (LLD §6.3): status + code for programmatic handling,
+  // message written for end users — generated apps render it verbatim.
+  class HlError extends Error {
+    constructor(status, code, message, retryAfter) {
+      super(message)
+      this.name = 'HlError'
+      this.status = status
+      this.code = code
+      if (retryAfter !== undefined) this.retryAfter = retryAfter
+    }
+  }
+  window.HlError = HlError
+
+  // --- Token handshake (§9.3) ------------------------------------------------
+  // The ready() gate queues all hl.* calls until the first genesis:token lands,
+  // absorbing the race where the app's onMounted fires before the handshake.
+  let token = null
+  let waiters = []
+
+  window.addEventListener('message', (e) => {
+    if (e.source !== window.parent) return
+    const data = e.data
+    if (data && data.type === 'genesis:token' && typeof data.token === 'string') {
+      token = data.token
+      waiters.splice(0).forEach((notify) => notify())
+    }
+  })
+
+  function firstToken() {
+    return new Promise((resolve, reject) => {
+      if (token) return resolve()
+      const timer = setTimeout(() => {
+        reject(new HlError(401, 'UNAUTHENTICATED',
+          'The preview could not authenticate. Reload the preview.'))
+      }, 10000)
+      waiters.push(() => { clearTimeout(timer); resolve() })
+    })
   }
 
-  async function respond(data) {
-    await delay(jitter())
-    return JSON.parse(JSON.stringify(data))
+  // On a proxy 401 (expired preview token): ask the parent for a
+  // force-refreshed token, wait for it to land, retry once (§9.4).
+  function refreshedToken() {
+    return new Promise((resolve) => {
+      // Fall through on timeout — the retry then reports the real error.
+      const timer = setTimeout(resolve, 10000)
+      waiters.push(() => { clearTimeout(timer); resolve() })
+      parent.postMessage({ type: 'genesis:token-refresh' }, '*')
+    })
   }
 
+  // --- Transport --------------------------------------------------------------
+
+  async function request(method, path, { query, body } = {}) {
+    await firstToken()
+
+    const send = () => {
+      const url = new URL(PROXY_BASE + path)
+      for (const [key, value] of Object.entries(query || {})) {
+        if (value !== undefined && value !== null) url.searchParams.set(key, value)
+      }
+      return fetch(url, {
+        method,
+        headers: {
+          authorization: 'Bearer ' + token,
+          ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
+        },
+        body: body !== undefined ? JSON.stringify(body) : undefined,
+      })
+    }
+
+    let res = await send()
+    if (res.status === 401) {
+      await refreshedToken()
+      res = await send()
+    }
+    if (!res.ok) {
+      let err = {}
+      try { err = await res.json() } catch { /* non-JSON error body */ }
+      throw new HlError(
+        res.status,
+        err.code || 'UNKNOWN',
+        err.message || 'The request failed. Try again.',
+        err.retryAfter,
+      )
+    }
+    return res.json()
+  }
+
+  const id = (value) => encodeURIComponent(String(value))
+
+  // SDK surface (LLD §6.2) — the ten whitelisted routes, nothing else.
   window.hl = {
     contacts: {
-      list: ({ limit = 25 } = {}) =>
-        respond({ contacts: MOCK.contacts.slice(0, limit), total: MOCK.contactsTotal }),
-      search: ({ query = '', limit = 25 } = {}) =>
-        respond({
-          contacts: MOCK.contacts
-            .filter((c) => c.name.toLowerCase().includes(String(query).toLowerCase()))
-            .slice(0, limit),
-        }),
+      list: ({ limit, page } = {}) =>
+        request('GET', '/hl/contacts', { query: { limit, page } }),
+      search: ({ query, limit } = {}) =>
+        request('GET', '/hl/contacts/search', { query: { query, limit } }),
+      create: (body) => request('POST', '/hl/contacts', { body }),
+      update: (contactId, body) =>
+        request('PUT', `/hl/contacts/${id(contactId)}`, { body }),
     },
     conversations: {
-      list: ({ limit = 20 } = {}) =>
-        respond({ conversations: [], unread: MOCK.conversationsUnread, limit }),
+      list: ({ limit } = {}) =>
+        request('GET', '/hl/conversations', { query: { limit } }),
+      messages: (conversationId, { limit, lastMessageId } = {}) =>
+        request('GET', `/hl/conversations/${id(conversationId)}/messages`, {
+          query: { limit, lastMessageId },
+        }),
+      send: (conversationId, body) =>
+        request('POST', `/hl/conversations/${id(conversationId)}/messages`, { body }),
     },
     calendars: {
-      list: () => respond({ calendars: MOCK.calendars }),
+      list: () => request('GET', '/hl/calendars'),
       appointments: ({ calendarId, startTime, endTime } = {}) =>
-        respond({
-          events: MOCK.appointments,
-          total: MOCK.appointmentsTotal,
-          range: { calendarId, startTime, endTime },
+        request('GET', '/hl/calendars/appointments', {
+          query: { calendarId, startTime, endTime },
+        }),
+      availability: (calendarId, { startDate, endDate, timezone } = {}) =>
+        request('GET', `/hl/calendars/${id(calendarId)}/availability`, {
+          query: { startDate, endDate, timezone },
         }),
     },
   }
