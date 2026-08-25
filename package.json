@@ -10,10 +10,12 @@
   },
   "dependencies": {
     "@lucide/vue": "^1.32.0",
+    "@monaco-editor/loader": "^1.7.0",
     "@vueuse/core": "^14.4.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "firebase": "^12.17.1",
+    "monaco-editor": "^0.56.0",
     "pinia": "^4.0.3",
     "reka-ui": "^2.10.3",
     "tailwind-merge": "^3.6.0",

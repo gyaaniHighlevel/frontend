@@ -73,18 +73,6 @@ export interface WorkspaceFile {
   content: string
 }
 
-/** One colored token of pre-highlighted mock source code. */
-export interface CodeSegment {
-  t: string
-  /** Text color; defaults to the editor's base tone. */
-  c?: string
-}
-
-export interface CodeLine {
-  seg: CodeSegment[]
-  /** Row highlighted as recently written by the model. */
-  highlight?: boolean
-}
 
 export type VersionStatus = 'live' | 'ok' | 'failed'
 

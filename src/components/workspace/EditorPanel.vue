@@ -1,13 +1,10 @@
 <script setup lang="ts">
-import { computed, ref, watch, nextTick } from 'vue'
-import { highlight, languageFor } from '@/lib/highlight'
+import { computed, ref, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
+import * as monaco from 'monaco-editor'
 import { useWorkspaceStore } from '@/stores/workspace'
+import { languageFor } from '@/lib/highlight'
 
 const workspace = useWorkspaceStore()
-
-const codeLines = computed(() =>
-  highlight(workspace.activeFile.content, languageFor(workspace.activeFile.path)),
-)
 
 const totalLines = computed(() =>
   workspace.files.reduce((sum, file) => sum + file.content.split('\n').length, 0),
@@ -16,58 +13,119 @@ const totalLines = computed(() =>
 /** Platform-owned pieces of the document shell (LLD §1.2) — shown for context. */
 const platformFiles = ['hl-sdk.js', 'import map', 'tailwind']
 
-// Follow-the-cursor while a generation streams into the active file (§10.3).
-const codeScroller = ref<HTMLElement>()
-watch(
-  () => workspace.activeFile.content,
-  async () => {
-    if (workspace.generationStatus !== 'streaming') return
-    await nextTick()
-    codeScroller.value?.scrollTo({ top: codeScroller.value.scrollHeight })
-  },
-)
+// Monaco editor instance
+const editorContainer = ref<HTMLElement>()
+let editor: monaco.editor.IStandaloneCodeEditor | null = null
 
-// Track if we're editing to show the textarea
+// Track if we're editing (for Monaco, this is always true when focused)
 const isEditing = ref(false)
-const editContent = ref('')
 
-// When switching files or when generation completes, exit edit mode
+// Initialize Monaco editor
+onMounted(async () => {
+  if (!editorContainer.value) return
+
+  // Define custom theme to match the existing design
+  monaco.editor.defineTheme('custom-dark', {
+    base: 'vs-dark',
+    inherit: true,
+    rules: [
+      { token: 'comment', foreground: '5b6f94' },
+      { token: 'string', foreground: '86efac' },
+      { token: 'number', foreground: 'fbbf24' },
+      { token: 'keyword', foreground: 'c084fc' },
+      { token: 'type', foreground: '60a5fa' },
+      { token: 'tag', foreground: '7c8db0' },
+    ],
+    colors: {
+      'editor.background': '#1a202c',
+      'editor.foreground': '#cbd5e1',
+      'editor.lineNumbersBackground': '#1a202c',
+      'editor.lineNumbersForeground': '#3c4a63',
+      'editor.selectionBackground': '#3b82f6',
+      'editorCursor.foreground': '#cbd5e1',
+      'editor.lineHighlightBackground': '#2d3748',
+    },
+  })
+
+  editor = monaco.editor.create(editorContainer.value, {
+    value: workspace.activeFile.content,
+    language: languageFor(workspace.activeFile.path),
+    theme: 'custom-dark',
+    fontSize: 12,
+    fontFamily: 'monospace',
+    lineHeight: 1.85 * 12,
+    lineNumbers: 'on',
+    minimap: { enabled: false },
+    scrollBeyondLastLine: false,
+    automaticLayout: true,
+    readOnly: workspace.generationStatus !== 'idle',
+    wordWrap: 'off',
+    tabSize: 2,
+    insertSpaces: true,
+  })
+
+  // Listen for content changes
+  editor.onDidChangeModelContent(() => {
+    const newContent = editor?.getValue() ?? ''
+    workspace.updateFileContent(workspace.activeFilePath, newContent)
+  })
+
+  // Update read-only state based on generation status
+  watch(
+    () => workspace.generationStatus,
+    (status) => {
+      if (editor) {
+        editor.updateOptions({ readOnly: status !== 'idle' })
+      }
+    },
+  )
+})
+
+// Clean up editor on unmount
+onBeforeUnmount(() => {
+  editor?.dispose()
+})
+
+// Update editor when active file changes
 watch(
   () => workspace.activeFilePath,
-  () => {
+  async () => {
+    if (!editor) return
+    const newLanguage = languageFor(workspace.activeFile.path)
+    const currentModel = editor.getModel()
+    if (currentModel) {
+      monaco.editor.setModelLanguage(currentModel, newLanguage)
+    }
+    editor.setValue(workspace.activeFile.content)
     isEditing.value = false
   },
 )
 
+// Update editor content when file content changes externally (e.g., from generation)
 watch(
-  () => workspace.generationStatus,
-  (status) => {
-    if (status !== 'idle') {
-      isEditing.value = false
+  () => workspace.activeFile.content,
+  (newContent) => {
+    if (editor && editor.getValue() !== newContent) {
+      const position = editor.getPosition()
+      editor.setValue(newContent)
+      if (position) {
+        editor.setPosition(position)
+      }
     }
   },
 )
 
-function startEditing() {
-  if (workspace.generationStatus !== 'idle') return
-  editContent.value = workspace.activeFile.content
-  isEditing.value = true
-  nextTick(() => {
-    const textarea = document.querySelector('.code-editor-textarea') as HTMLTextAreaElement
-    textarea?.focus()
-  })
-}
-
-function cancelEditing() {
-  isEditing.value = false
-  editContent.value = ''
-}
-
-function saveEditing() {
-  workspace.updateFileContent(workspace.activeFilePath, editContent.value)
-  isEditing.value = false
-  editContent.value = ''
-}
+// Auto-scroll to end during streaming generation
+watch(
+  () => workspace.generationStatus,
+  async (status) => {
+    if (status === 'streaming' && editor) {
+      await nextTick()
+      const lineCount = editor.getModel()?.getLineCount() ?? 0
+      editor.revealLine(lineCount)
+    }
+  },
+)
 </script>
 
 <template>
@@ -115,43 +173,9 @@ function saveEditing() {
         </div>
       </div>
 
-      <!-- Code -->
+      <!-- Monaco Editor -->
       <div class="flex-1 overflow-hidden flex flex-col">
-        <!-- Edit mode: textarea -->
-        <textarea
-          v-if="isEditing"
-          v-model="editContent"
-          class="code-editor-textarea flex-1 resize-none bg-editor p-3.5 font-mono text-xs leading-[1.85] text-[#cbd5e1] outline-none border-none"
-          @keydown.escape="cancelEditing"
-        />
-        <!-- Read mode: syntax highlighted code -->
-        <div v-else ref="codeScroller" class="flex-1 overflow-auto py-3.5 font-mono text-xs leading-[1.85] cursor-text" @click="startEditing">
-          <div v-for="(line, i) in codeLines" :key="i" class="flex px-3.5">
-            <span class="w-8 shrink-0 text-[#3c4a63]">{{ i + 1 }}</span>
-            <span class="whitespace-pre">
-              <span v-for="(seg, j) in line.seg" :key="j" :style="{ color: seg.c ?? '#cbd5e1' }">{{
-                seg.t
-              }}</span>
-            </span>
-          </div>
-        </div>
-        <!-- Edit mode: action buttons -->
-        <div v-if="isEditing" class="flex gap-2 border-t border-editor-border bg-editor-panel px-3.5 py-2">
-          <button
-            type="button"
-            class="rounded px-3 py-1 text-xs font-medium bg-[#3b82f6] text-white hover:bg-[#2563eb]"
-            @click="saveEditing"
-          >
-            Save
-          </button>
-          <button
-            type="button"
-            class="rounded px-3 py-1 text-xs font-medium bg-[#4b5563] text-[#cbd5e1] hover:bg-[#5a6577]"
-            @click="cancelEditing"
-          >
-            Cancel
-          </button>
-        </div>
+        <div ref="editorContainer" class="flex-1" />
       </div>
     </div>
 
@@ -165,3 +189,10 @@ function saveEditing() {
     </div>
   </section>
 </template>
+
+<style scoped>
+/* Ensure the editor container takes up all available space */
+:deep(.monaco-editor) {
+  font-family: monospace;
+}
+</style>
